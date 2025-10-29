@@ -1,0 +1,45 @@
+.data
+IEL # initial energy level
+EDR # energy depletion rate
+MEL # maximum energy level
+CEL # current energy level
+LC  # loopCount
+CMD # list of commands
+
+.text
+main:
+    # jump to reset
+    # jump to display_status
+
+    main_loop:
+        print(ask for command)
+        # jump to wait_for_command
+        
+    wait_for_command:
+        while (no user input):
+            loopCount += 1
+            if loopCount == 1000: 
+                decrease currentEnergy by 1
+                reset loop_count
+            check_energy
+        # jump to command_handler
+
+    command_handler:
+        if the input command not in CMD:
+            # jump to wait_for_command
+        else:
+            # branch to the corresponding command_functions
+            check_energy
+
+    command_functions:
+        1. increase/decrease currentEnergy (feed, entertain, Pet, Ignore)
+        2. reset
+        3. quit
+        # jump to main_loop
+    
+    reset:
+        # clear everything aside from the initial params
+
+    quit:
+        print(End game)
+        exit
