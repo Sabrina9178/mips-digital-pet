@@ -1,1 +1,1 @@
-# MIPS-Digital-Pet
+# mips-digital-pet
