@@ -1,0 +1,154 @@
+#init values
+
+.data
+IEL: .word 5
+MEL: .word 15
+EDR: .word 1
+
+enter_init_energy: .asciiz "Enter a value for intial energy level: "
+enter_max_energy: .asciiz "Enter max energy level: "
+enter_energy_depletion: .asciiz "Enter energy depletion rate: "
+die: .asciiz "pet has died!"
+delay: .asciiz "delaying"
+
+#fepirq
+execute_f: .asciiz "Fed pet"
+execute_e: .asciiz "Entertained pet"
+execute_p: .asciiz "petting pet"
+execute_i: .asciiz "ignore pet"
+execute_r: .asciiz "reset"
+execute_q: .asciiz "quit"
+
+.text
+.globl main
+main:
+#print message for user prompt
+li $v0, 4
+la $a0, enter_init_energy
+syscall
+
+#get user input for initial energy level
+li $v0, 5
+syscall
+#sw $v0, IEL
+move $s0, $v0
+
+#print message for user prompt
+li $v0, 4
+la $a0, enter_max_energy
+syscall
+
+#get user input for maximum energy level
+li $v0, 5
+syscall
+#sw $v0, MEL
+move $s1, $v0
+
+
+#print message for user prompt
+li $v0, 4
+la $a0, enter_energy_depletion
+syscall
+
+#get user input for energy depleton rate
+li $v0, 5
+syscall
+#sw $v0, EDR
+move $s2, $v0
+
+#begin main gameplay loop
+#have register $s3 hold the value for current energy level
+move $s3, $s0
+
+loop_start:
+blez $s3, Exit
+
+#delay loop
+li $s5, 1000
+li $s6, 0
+
+# Initialize MMIO base address
+lui $t0, 0xffff
+
+delay_loop_start:
+# Print "delaying"
+li $v0, 4
+la $a0, delay
+syscall
+
+# Check for input (Non-blocking)
+#checks if $t1 is empty
+lw $t1, 0($t0)
+bnez $t1, input_detected
+
+# Delay Counter Logic
+beq $s5, $s6, delay_loop_exit 
+addi $s6, $s6, 1
+j delay_loop_start
+
+input_detected:
+# 4($t0) = 0xffff0004 (Receiver Data)
+lw $s4, 4($t0)
+j delay_loop_exit
+
+delay_loop_exit:
+
+
+#handlers here F, E, P, I, R, Q
+Check_F:
+li $t0, 0x46 #F
+beq $s4, $t0, execute_F
+nop
+
+Check_E:
+li $t1, 0x45 #E
+beq $s4, $t1, execute_E
+nop
+
+Check_P:
+li $t2, 0x50 #P
+beq $s4, $t2, execute_P
+nop
+
+Check_I:
+li $t3, 0x49 #I
+beq $s4, $t3, execute_I
+nop
+
+Check_R:
+li $t4, 0x52 #R
+beq $s4, $t4, execute_R
+nop
+
+Check_Q:
+li $t5, 0x51 #Q
+beq $s4, $t5, execute_Q
+nop
+
+#energy depletion
+sub $s3, $s3, $s2
+j loop_start
+
+#handles commands. Input here??
+execute_F:
+la $a2 execute_f
+
+execute_E:
+la $a2 execute_e
+
+execute_P:
+la $a2 execute_p
+
+execute_I:
+la $a2 execute_i
+
+execute_R:
+la $a2 execute_r
+
+execute_Q:
+la $a2 execute_q
+
+Exit:
+li $v0, 4
+la $a0, die
+syscall
