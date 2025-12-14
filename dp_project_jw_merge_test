@@ -1,0 +1,844 @@
+# $s0 = energy depletion rate
+# $s1 = maximum energy level
+# $s2 = initial energy level
+# $s3 = current energy level
+# $s4 = command
+# $s5 = commandUnit
+# $s6 = Start Time (Timestamp before waiting)
+
+.data
+    # Input waiting messages
+    msgCatchup:     .asciiz "\n(Time passed while thinking... Natural depletion: "
+    msgLoss:        .asciiz " energy lost)\n"
+    newline:        .asciiz "\n"
+    paren_end:      .asciiz ")\n"
+
+    header:             .asciiz "\n=== Digital Pet Simulator (MIPS32) ===\nInitializing system…"
+    initializeMessage:  .asciiz "Initializing system...\n\n"
+    inputPrompt:        .asciiz "Please set parameters (press Enter for default):\n"
+    inputMessage_EDR:   .asciiz "Enter Natural Energy Depletion Rate (EDR) [Default: 1]:"
+    inputMessage_MEL:   .asciiz "\nEnter Maximum Energy Level (MEL) [Default: 15]:"
+    inputMessage_IEL:   .asciiz "\nEnter Initial Energy Level (IEL) [Default: 5]:"
+    
+    userInput_EDR:      .space 20
+    userInput_MEL:      .space 20
+    userInput_IEL:      .space 20
+    
+    default_EDR:        .word 1
+    default_MEL:        .word 15
+    default_IEL:        .word 5
+
+    paramSuccess:       .asciiz "\nParameters set successfully!\n"
+    msgEDR:             .asciiz "- EDR: "
+    msgMEL:             .asciiz "- MEL: "
+    msgIEL:             .asciiz "- IEL: "
+    
+    unitsSec:           .asciiz " units/sec\n"
+    units:              .asciiz " units\n"
+    unit:               .asciiz " unit\n"
+
+    aliveMessage:       .asciiz "\nYour Digital Pet is alive! Current status:\n"
+    promptMessage:      .asciiz "\nEnter a command (F, E, P, I, R, Q) > "
+    timeMessage:        .asciiz "\nTime +1s... Natural energy depletion!\n"
+
+    feedMessage:        .asciiz "\nCommand recognized: Feed "
+    playMessage:        .asciiz "\nCommand recognized: Entertain "
+    petMessage:         .asciiz "\nCommand recognized: Pet "
+    ignoreMessage:      .asciiz "\nCommand recognized: Ignore "
+    resetMessage:       .asciiz "\nCommand recognized: Reset.\nDigital Pet has been reset to its initial state!\n"
+    quitMessage:        .asciiz "\nCommand recognized: Quit.\nSaving session... goodbye!\n--- simulation terminated ---\n"
+
+    reachMaximumPrompt: .asciiz "\nError, maximum energy level reached! Capped to the Max.\n"
+    reachMinimumPrompt: .asciiz "\nError, energy level equal or less than 0. DP is dead!\n"
+    deadMessage:        .asciiz "\n*** Your Digital Pet has died! ***\n"
+    pleaseResetMessage: .asciiz "\nYour pet has already died because of you. Please press ‘R’ to revive it\n"
+
+    feedMultiplier:             .word 1
+    entertainAndPetMultiplier:  .word 2
+    ignoreMultiplier:           .word -3
+    
+    positiveEnergyChangePrompt: .asciiz "Energy increased by"
+    negativeEnergyChangePrompt: .asciiz "Energy decreased by"
+    leftBracket:    .asciiz "( "
+    rightBracket:   .asciiz ")"
+    multipleSign:   .asciiz "x"
+
+    inputCommandMessage:    .asciiz "Enter a command (F, E, P, I, R, Q)>\n"
+    inputCommand:           .space 30
+    inputCommandUnit:       .space 20
+    newLine:                .asciiz "\n"
+
+    # printEnergyBar
+    barLeft:    .asciiz "["
+    barRight:   .asciiz "]"
+    barFill:    .asciiz "#"
+    barEmpty:   .asciiz "-"
+    energyPrompt: .asciiz " Energy: "
+    flash:      .asciiz "/"
+
+    # setSuccessfully
+    setSuccessfullyPrompt:  .asciiz "Parameters set successfully!\n"
+    sign_EDR:               .asciiz "- EDR: "
+    sign_MEL:               .asciiz "- MEL: "
+    sign_IEL:               .asciiz "- IEL: "
+    unit_EDR:               .asciiz " units/sec\n"
+    unit_MEL:               .asciiz " units\n"
+    unit_IEL:               .asciiz " units\n\n"
+    currentStatusMessage:   .asciiz "Your Digital Pet is alive! Current status:\n"
+    
+    # Validation Logic Data
+    input_buffer: .space 50
+    invalid_msg: .asciiz "\nInvalid input. Please input command again.\n"
+
+.text
+.globl main
+
+main:
+    jal initialization
+
+_gameLoop:
+    jal startTimer
+    jal askCommand
+    jal waitForCommand          # return command
+    jal handleTimeCatchup
+    jal executeCommand
+    j _gameLoop
+
+# Command LifeCycle Functions
+startTimer:
+    li  $v0, 30 
+    syscall 
+    move $s6, $a0 
+    jr  $ra
+
+askCommand:
+    li  $v0, 4
+    la  $a0, inputCommandMessage
+    syscall
+    jr  $ra
+
+waitForCommand:
+    # ---------------------------------------------------------
+    # Integrated Validation/Parsing Logic
+    # ---------------------------------------------------------
+    
+    # 1. Get user input string
+    get_user_input:
+        li $v0, 8           # syscall for reading string
+        la $a0, input_buffer 
+        li $a1, 50          # buffer size
+        syscall
+        
+        # Initialize iterator pointer
+        la $t0, input_buffer
+
+    # 2. Iterate characters
+    char_loop_start:
+        lb $t1, 0($t0)      # loads a byte
+        beqz $t1, iterate_loop_end # if null terminator, stop loop
+       
+       # skip white spaces
+        li $t2, 32          # space ' '
+        beq $t1, $t2, skip_char
+        li $t2, 9           # tab '\t'
+        beq $t1, $t2, skip_char
+        li $t2, 10          # newline '\n'
+        beq $t1, $t2, skip_char
+       
+       # check if upper character (Simple validation A-Z)
+       li $t2, 'A' 
+       li $t3, 'Z' 
+       blt $t1, $t2, invalid_input
+       bgt $t1, $t3, invalid_input
+       
+       # save command
+       move $t5, $t1
+       addi $t0, $t0, 1
+       li $t6, 0            # init accumulator
+
+    parse_num_start:
+        lb $t1, 0($t0)
+        # Check for termination
+        beqz $t1, iterate_loop_end 
+           
+       # skip white space
+        li $t2, 32      
+        beq $t1, $t2, skip_num_char
+        li $t2, 9       
+        beq $t1, $t2, skip_num_char
+        li $t2, 10      
+        beq $t1, $t2, skip_num_char
+      
+       # parse number
+       li $t2, '0' 
+       li $t3, '9' 
+       blt $t1, $t2, invalid_input
+       bgt $t1, $t3, invalid_input
+       
+       # append digit to accumulator
+       mul $t6, $t6, 10             # acc *= 10
+       addi $t1, $t1, -48           # char - '0'
+       add  $t6, $t6, $t1           # acc += digit    
+       addi $t0, $t0, 1
+       j parse_num_start
+       
+    skip_char:
+       addi $t0, $t0, 1      # move to next character
+       j char_loop_start
+       
+    skip_num_char:
+       addi $t0, $t0, 1
+       j parse_num_start
+       
+    # Invalid input handler
+    invalid_input:
+        # Print Invalid Message
+        li $v0, 4
+        la $a0, invalid_msg
+        syscall
+
+        li $t1, 0            # Null byte to fill
+        la $t4, input_buffer # Reset buffer pointer
+        li $t0, 0            # Reset counter
+        li $t2, 50           # Limit
+
+    clear_loop:
+        # Check if we have cleared all 50 bytes
+        bge $t0, $t2, clear_done  # If ($t0 >= 50), exit loop
+        sb $t1, 0($t4) # Store the null byte at the current address
+        addi $t4, $t4, 1 # Increment the base address pointer by 1 byte
+        addi $t0, $t0, 1 # Increment the counter
+        
+        j clear_loop 
+        
+    clear_done:
+        move $t5, $zero #resets command
+        
+        # IMPORTANT: Jump back to RE-PROMPT (askCommand needs to run again ideally, 
+        # but askCommand is outside this function. We can just print the prompt here manually or jump to start)
+        # To be safe and consistent with previous flow, let's reprint prompt.
+        li $v0, 4
+        la $a0, inputCommandMessage
+        syscall
+        
+        j get_user_input # Check input again
+
+    iterate_loop_end:
+        # Save validated input to requested result registers
+        move $s4, $t5   # Command
+        move $s5, $t6   # Unit
+        
+    jr  $ra 
+    
+    # ---------------------------------------------------------
+    # End of Integrated Logic
+    # ---------------------------------------------------------
+
+_skipUnitRead:
+    # This label is no longer reachable or needed with the new logic 
+    # but keeping it safe or removing it is fine. 
+    # Since I replaced the entire block that jumped here, it's effectively dead code.
+    li  $s5, 0                 
+    jr  $ra
+
+handleTimeCatchup:
+    li  $v0, 30
+    syscall
+
+    subu $t0, $a0, $s6
+    div  $t0, $t0, 1000
+
+    beqz $t0, endCatchup
+
+    mul  $t2, $t0, $s0
+    sub  $s3, $s3, $t2
+
+    li   $v0, 4
+    la   $a0, msgCatchup
+    syscall
+
+    li   $v0, 1 
+    move $a0, $t0 
+    syscall 
+
+    li   $v0, 4 
+    la   $a0, msgLoss
+    syscall
+
+    li   $v0, 1
+    move $a0, $t2
+    syscall 
+
+    li   $v0, 4
+    la   $a0, paren_end
+    syscall
+
+endCatchup:
+    jr  $ra
+
+executeCommand:
+    addi $sp, $sp, -4
+    sw   $ra, 0($sp)    
+    beq  $s4, 'F', _feedBranch
+    beq  $s4, 'f', _feedBranch  # Case insensitive
+    beq  $s4, 'E', _entertainBranch
+    beq  $s4, 'e', _entertainBranch
+    beq  $s4, 'P', _petBranch
+    beq  $s4, 'p', _petBranch
+    beq  $s4, 'I', _ignoreBranch
+    beq  $s4, 'i', _ignoreBranch
+    beq  $s4, 'R', _reset
+    beq  $s4, 'r', _reset
+    beq  $s4, 'Q', _quit
+    beq  $s4, 'q', _quit
+    j    _endExecuteCommand
+
+_feedBranch:
+    la   $a0, feedMessage
+    jal  printRecPrompt
+    jal  feed
+    j    _endExecuteCommand
+
+_entertainBranch:
+    la   $a0, playMessage
+    jal  printRecPrompt
+    jal  entertain
+    j    _endExecuteCommand
+
+_petBranch:
+    la   $a0, petMessage
+    jal  printRecPrompt
+    jal  pet
+    j    _endExecuteCommand
+
+_ignoreBranch:
+    la   $a0, ignoreMessage
+    jal  printRecPrompt
+    jal  ignore
+    j    _endExecuteCommand
+
+_reset:
+    la   $a0, resetMessage
+    jal  printRecPrompt
+    jal  reset
+    j    _endExecuteCommand
+
+_quit:
+    la   $a0, quitMessage
+    jal  printRecPrompt
+    li   $v0, 10 
+    syscall
+
+_endExecuteCommand:
+    jal  printEnergyBar
+    bne  $s3, $zero, _notDead   # If not dead, don’t print dead message
+
+    li   $v0, 4
+    la   $a0, deadMessage
+    syscall
+    
+    # Optional logic: Exit or Reset prompt here?
+    # For now, just exit or reset is safest. 
+    # But loop will continue with dead pet?
+    # Original code continued loop.
+
+_notDead:
+    lw   $ra, 0($sp) 
+    addi $sp, $sp, 4
+    jr   $ra
+
+
+# Recognize command
+printRecPrompt:
+    # $a0 = commandMessage
+    addi $sp, $sp, -4
+    sw   $ra, 0($sp)
+    li   $v0, 4
+    syscall
+
+    move $a0, $s5
+    li   $v0, 1
+    syscall
+    lw   $ra, 0($sp) 
+    addi $sp, $sp, 4
+    jr   $ra
+
+# Six Main Functions
+feed:
+    addi $sp, $sp, -4
+    sw   $ra, 0($sp)
+    lw   $a0, feedMultiplier($zero)
+    jal  calculateEnergyChange
+    lw   $ra, 0($sp) 
+    addi $sp, $sp, 4
+    jr   $ra
+
+entertain:
+    addi $sp, $sp, -4
+    sw   $ra, 0($sp)
+    lw   $a0, entertainAndPetMultiplier($zero)
+    jal  calculateEnergyChange
+    lw   $ra, 0($sp) 
+    addi $sp, $sp, 4
+    jr   $ra
+
+pet:
+    addi $sp, $sp, -4
+    sw   $ra, 0($sp)
+    lw   $a0, entertainAndPetMultiplier($zero)
+    jal  calculateEnergyChange
+    lw   $ra, 0($sp) 
+    addi $sp, $sp, 4
+    jr   $ra
+
+ignore:
+    addi $sp, $sp, -4
+    sw   $ra, 0($sp)
+    lw   $a0, ignoreMultiplier($zero)
+    jal  calculateEnergyChange
+    lw   $ra, 0($sp) 
+    addi $sp, $sp, 4
+    jr   $ra
+
+reset:
+    addi $sp, $sp, -4
+    sw   $ra, 0($sp)
+    move $s3, $s2
+    lw   $ra, 0($sp) 
+    addi $sp, $sp, 4
+    jr   $ra
+
+# Calculate change of energy
+calculateEnergyChange:
+    # $a0 = command multiplier
+    addi $sp, $sp, -4
+    sw   $ra, 0($sp)
+    move $t0, $a0               # $t0 = command multiplier
+    mul  $a1, $s5, $t0          # $a1 = energy change = unit * commandMultiplier
+    add  $t2, $s3, $a1          # $t2 = temp current energy
+
+    bge  $t2, $s1, _upperLimit
+    blez $t2, _energyZero
+    
+    add  $s3, $s3, $a1          # Add energy change to current energy level
+    bgt  $t0, $zero, _printPos
+    j    _printNeg
+
+_upperLimit:
+    jal  printUpperLimit
+    j    _endCalculate
+
+_energyZero:
+    jal  printNegEnergyChange
+    jal  printEnergyZero
+    j    _endCalculate
+
+_printPos:
+    jal  printPosEnergyChange
+    j    _endCalculate
+
+_printNeg:
+    jal  printNegEnergyChange
+
+_endCalculate:
+    lw   $ra, 0($sp) 
+    addi $sp, $sp, 4
+    jr   $ra
+
+# Print Calculation Result Prompt
+printUpperLimit:
+    addi $sp, $sp, -4
+    sw   $ra, 0($sp)
+    move $s3, $s1               # set the current energy to the maximum level
+    li   $v0, 4
+    la   $a0, reachMaximumPrompt
+    syscall
+    lw   $ra, 0($sp)            # Missing restore in original code
+    addi $sp, $sp, 4
+    jr   $ra
+
+printEnergyZero:
+    addi $sp, $sp, -4
+    sw   $ra, 0($sp)
+    move $s3, $zero
+    li   $v0, 4
+    la   $a0, reachMinimumPrompt
+    syscall
+    lw   $ra, 0($sp) 
+    addi $sp, $sp, 4
+    jr   $ra
+
+printPosEnergyChange:
+    # $a0 = command multiplier
+    # $a1 = energy change
+    addi $sp, $sp, -4
+    sw   $ra, 0($sp)
+    move $t0, $a0               # $t0 = command multiplier
+    move $t1, $a1               # $t1 = energy change
+
+    li   $v0, 4
+    la   $a0, positiveEnergyChangePrompt    
+    syscall                     # print “Energy increase by”
+    
+    move $a0, $t1                   
+    li   $v0, 1                 
+    syscall                     # print {energy change}
+    
+    beq  $t1, 1, _pos_printUnit
+    j    _pos_printUnits
+
+_pos_printUnit:
+    li   $v0, 4
+    la   $a0, unit                   
+    syscall                     # print “unit”
+    j    _pos_finishPrintUnits
+
+_pos_printUnits:
+    li   $v0, 4
+    la   $a0, units                  
+    syscall                     # print “units”
+
+_pos_finishPrintUnits:
+    move $a0, $t0
+    beq  $t1, 1, _pos_dontprintBrackets
+    jal  printBrackets
+
+_pos_dontprintBrackets:
+    lw   $ra, 0($sp) 
+    addi $sp, $sp, 4
+    jr   $ra
+
+printNegEnergyChange:
+    # $a0 = command multiplier
+    # $a1 = energy change
+    addi $sp, $sp, -4
+    sw   $ra, 0($sp)    
+    sub  $t0, $zero, $a0
+    sub  $t1, $zero, $a1
+
+    li   $v0, 4
+    la   $a0, negativeEnergyChangePrompt    # “Energy decrease by”
+    syscall
+    
+    move $a0, $t1
+    li   $v0, 1                 # “{energy change}”
+    syscall
+
+    beq  $t1, 1, _neg_printUnit
+    j    _neg_printUnits
+
+_neg_printUnit:
+    li   $v0, 4
+    la   $a0, unit                   
+    syscall                     # print “unit”
+    j    _neg_finishPrintUnits
+
+_neg_printUnits:
+    li   $v0, 4
+    la   $a0, units                  
+    syscall                     # print “units”
+
+_neg_finishPrintUnits:
+    move $a0, $t0
+    beq  $t1, 1, _neg_dontprintBrackets
+    jal  printBrackets
+
+_neg_dontprintBrackets:
+    lw   $ra, 0($sp) 
+    addi $sp, $sp, 4
+    jr   $ra
+
+printBrackets:
+    # $a0 = command multiplier
+    addi $sp, $sp, -4
+    sw   $ra, 0($sp)
+    move $t0, $a0               # $t0 = command multiplier
+
+    li   $v0, 4
+    la   $a0, leftBracket       #”(”
+    syscall
+
+    move $a0, $s5
+    li   $v0, 1                 #”{userinput unit}”
+    syscall
+
+    li   $v0, 4
+    la   $a0, multipleSign      #”x”
+    syscall
+
+    move $a0, $t0
+    li   $v0, 1                 #”{multiplier}”
+    syscall
+
+    li   $v0, 4
+    la   $a0, rightBracket      #”)”
+    syscall
+    
+    lw   $ra, 0($sp) 
+    addi $sp, $sp, 4
+    jr   $ra
+
+# Print Energy Bar
+printEnergyBar:
+    addi $sp, $sp, -4
+    sw   $ra, 0($sp)
+    li   $v0, 4
+    la   $a0, barLeft
+    syscall
+    
+    # Print fill part
+    move $t0, $s3
+_printFillLoop:
+    blez $t0, _endPrintFillLoop
+    li   $v0, 4
+    la   $a0, barFill
+    syscall
+    subi $t0, $t0, 1
+    j    _printFillLoop
+
+_endPrintFillLoop:
+    sub  $t0, $s1, $s3
+_printEmptyLoop:
+    blez $t0, _printBarRight
+    li   $v0, 4
+    la   $a0, barEmpty
+    syscall
+    subi $t0, $t0, 1
+    j    _printEmptyLoop
+    
+_printBarRight:
+    li   $v0, 4
+    la   $a0, barRight
+    syscall 
+
+_printEnergyPrompt:
+    li   $v0, 4
+    la   $a0, energyPrompt
+    syscall
+
+    move $a0, $s3
+    li   $v0, 1
+    syscall
+
+    li   $v0, 4
+    la   $a0, flash
+    syscall
+
+    move $a0, $s1
+    li   $v0, 1
+    syscall
+
+    lw   $ra, 0($sp) 
+    addi $sp, $sp, 4
+    jr   $ra
+
+# Initialization Functions
+initialization:
+    addi $sp, $sp, -4
+    sw   $ra, 0($sp)
+    jal  inputParameters
+    jal  askEDR
+    jal  askMEL
+    jal  askIEL
+    jal  setSuccessfully
+    jal  printEnergyBar
+    lw   $ra, 0($sp) 
+    addi $sp, $sp, 4
+    jr   $ra
+
+inputParameters:
+    addi $sp, $sp, -4
+    sw   $ra, 0($sp)
+    li   $v0, 4
+    la   $a0, header
+    syscall
+    
+    li   $v0, 4
+    la   $a0, initializeMessage
+    syscall
+    
+    li   $v0, 4
+    la   $a0, inputPrompt
+    syscall
+    
+    lw   $ra, 0($sp) 
+    addi $sp, $sp, 4
+    jr   $ra
+    
+askEDR:
+    addi $sp, $sp, -4
+    sw   $ra, 0($sp)
+    # Print prompt
+    li   $v0, 4
+    la   $a0, inputMessage_EDR
+    syscall
+    
+    # Read String
+    li   $v0, 8
+    la   $a0, userInput_EDR
+    li   $a1, 20
+    syscall
+    
+    # Check for empty input
+    la   $t0, userInput_EDR
+    lb   $t1, 0($t0)
+    beq  $t1, 10, _useDefaultEDR
+    
+    # Parse String to Integer
+    move $a0, $t0
+    jal  stringToInteger
+    move $s0, $v0
+    j    _endAskEDR
+
+_useDefaultEDR:
+    la   $t2, default_EDR
+    lw   $s0, 0($t2)
+
+_endAskEDR:
+    lw   $ra, 0($sp) 
+    addi $sp, $sp, 4
+    jr   $ra
+
+stringToInteger:
+    # $a0 = input string
+    # $v0 = converted integer
+    addi $sp, $sp, -4
+    sw   $ra, 0($sp)
+    move $t0, $a0
+    li   $v0, 0
+_startStringToInteger:
+    lb   $t1, 0($t0)                # Load a character 
+    beq  $t1, 10, _endStringToInteger   # Stop if Newline 
+    beq  $t1, 0, _endStringToInteger    # Stop if Null terminator 
+    subi $t1, $t1, 48               # Convert ASCII '0'-'9' to integer 0-9 
+    mul  $v0, $v0, 10               # Shift previous result (x10) 
+    add  $v0, $v0, $t1              # Add new digit 
+    addi $t0, $t0, 1                # Move to next character 
+    j    _startStringToInteger
+_endStringToInteger:
+    lw   $ra, 0($sp) 
+    addi $sp, $sp, 4
+    jr   $ra
+    
+askMEL:
+    addi $sp, $sp, -4
+    sw   $ra, 0($sp)
+    li   $v0, 4
+    la   $a0, inputMessage_MEL
+    syscall
+    
+    li   $v0, 8
+    la   $a0, userInput_MEL
+    li   $a1, 20
+    syscall
+
+    # Check for empty input
+    la   $t0, userInput_MEL
+    lb   $t1, 0($t0)
+    beq  $t1, 10, _useDefaultMEL
+    
+    # Parse String to Integer
+    move $a0, $t0
+    jal  stringToInteger
+    move $s1, $v0
+    j    _endAskMEL
+
+_useDefaultMEL:
+    la   $t2, default_MEL
+    lw   $s1, 0($t2)
+
+_endAskMEL:
+    lw   $ra, 0($sp) 
+    addi $sp, $sp, 4
+    jr   $ra
+    
+askIEL:
+    addi $sp, $sp, -4
+    sw   $ra, 0($sp)
+    li   $v0, 4
+    la   $a0, inputMessage_IEL
+    syscall
+    
+    li   $v0, 8
+    la   $a0, userInput_IEL
+    li   $a1, 20
+    syscall
+
+    # Check for empty input
+    la   $t0, userInput_IEL
+    lb   $t1, 0($t0)
+    beq  $t1, 10, _useDefaultIEL
+    
+    # Parse String to Integer
+    move $a0, $t0
+    jal  stringToInteger
+    move $s2, $v0           # Set initial energy level to $s2
+    move $s3, $s2           
+    j    _endAskIEL
+
+_useDefaultIEL:
+    la   $t2, default_IEL
+    lw   $s2, 0($t2)
+
+_endAskIEL:
+    move $s3, $s2           # Set current energy level to $s3
+    lw   $ra, 0($sp) 
+    addi $sp, $sp, 4
+    jr   $ra
+    
+setSuccessfully:
+    addi $sp, $sp, -4
+    sw   $ra, 0($sp)
+    li   $v0, 4
+    la   $a0, setSuccessfullyPrompt
+    syscall
+
+    li   $v0, 4
+    la   $a0, sign_EDR
+    syscall
+    
+    li   $v0, 1
+    move $a0, $s0
+    syscall
+    
+    li   $v0, 4
+    la   $a0, unit_EDR
+    syscall
+    
+    li   $v0, 4
+    la   $a0, sign_MEL
+    syscall
+    
+    li   $v0, 1
+    move $a0, $s1
+    syscall
+    
+    li   $v0, 4
+    la   $a0, unit_MEL
+    syscall
+    
+    li   $v0, 4
+    la   $a0, sign_IEL
+    syscall
+    
+    li   $v0, 1
+    move $a0, $s2
+    syscall
+    
+    li   $v0, 4
+    la   $a0, unit_IEL
+    syscall
+    
+    li   $v0, 4
+    la   $a0, currentStatusMessage
+    syscall
+
+    lw   $ra, 0($sp) 
+    addi $sp, $sp, 4
+    jr   $ra
+
+
+
+
+
+
